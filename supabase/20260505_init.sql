@@ -5,7 +5,7 @@
 create extension
 if not exists vector;
     -- 2. Enum types
-    create type file_type as enum ('pdf', 'xlsx', 'csv', 'docx');
+    create type file_type as enum ('pdf', 'xlsx', 'csv', 'docx', 'md', 'txt');
     create type document_category as enum ( 'manual', 'datasheet', 'maintenance_record', 'procedure', 'report', 'specification', 'log', 'other' );
     -- 3. documents table
     create table if not exists documents

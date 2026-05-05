@@ -244,10 +244,12 @@ async def _hybrid_search(
     """
 
     async with pool.acquire() as conn:
+        # Convert embedding list to string representation for pgvector
+        embed_str = "[" + ", ".join(str(v) for v in embedding) + "]"
         rows = await conn.fetch(
             sql,
             query_text,
-            embedding,
+            embed_str,
             top_k,
             filters.equipment_id,
             filters.document_category,

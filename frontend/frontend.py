@@ -97,78 +97,46 @@ def _extract_error_detail(text: str) -> str:
 
 
 def _handle_ingestion(files: list) -> None:
-    """Upload files one-by-one to POST /ingest and poll for progress."""
+    """Upload files one-by-one to POST /ingest and poll for progress.
+
+    Uses session_state to track in-progress jobs so the UI can update
+    without blocking Streamlit's event loop.
+    """
     import time
 
+    # Initialize session state for tracking ingestion jobs if not present
+    if "ingestion_jobs" not in st.session_state:
+        st.session_state.ingestion_jobs = {}  # type: ignore[attr-defined]
+
     for f in files:
-        with st.status(f"Uploading **{f.name}** …", expanded=True) as status:
-            try:
-                resp_data = f.read()
+        resp_data = f.read()
 
-                # Start ingestion job
-                resp = httpx.post(
-                    f"{BACKEND_URL}/ingest",
-                    files={"file": (f.name, resp_data, f.type)},
-                    data={
-                        "category": upload_category,
-                        "equipment_id": upload_equipment_id or None,
-                        "location": upload_location or None,
-                        "revision": upload_revision or None,
-                    },
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                job_id = resp.json()["job_id"]
+        # Start ingestion job
+        resp = httpx.post(
+            f"{BACKEND_URL}/ingest",
+            files={"file": (f.name, resp_data, f.type)},
+            data={
+                "category": upload_category,
+                "equipment_id": upload_equipment_id or None,
+                "location": upload_location or None,
+                "revision": upload_revision or None,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        job_id = resp.json()["job_id"]
 
-                # Poll for progress
-                last_message = None
-                for _ in range(600):  # max 5 minutes (500ms * 600)
-                    time.sleep(0.5)
-                    try:
-                        status_resp = httpx.get(
-                            f"{BACKEND_URL}/ingest/status/{job_id}",
-                            timeout=10,
-                        )
-                        if status_resp.status_code == 404:
-                            break
-                        job = status_resp.json()
-                        last_message = job.get("message", "")
-                        current_status = job.get("status", "unknown")
+        # Store job info in session state for polling
+        st.session_state.ingestion_jobs[job_id] = {  # type: ignore[attr-defined]
+            "filename": f.name,
+            "status": "queued",
+            "message": f"Queued **{f.name}**",
+            "result": None,
+            "error": None,
+        }
 
-                        if current_status == "complete":
-                            result = job.get("result", {})
-                            chunks = result.get("chunks", 0)
-                            status.update(
-                                label=job["message"],
-                                state="complete",
-                            )
-                            break
-                        elif current_status == "error":
-                            status.update(
-                                label=job["message"],
-                                state="error",
-                            )
-                            break
-                        else:
-                            status.update(label=last_message)
-                    except Exception:
-                        pass
-
-                # If still pending after timeout, show last known state
-                if last_message and "complete" not in str(status):
-                    status.update(label=last_message, state="complete")
-
-            except httpx.HTTPStatusError as exc:
-                detail = _extract_error_detail(exc.response.text)
-                status.update(
-                    label=f"Failed — **{f.name}** ({exc.response.status_code}): {detail}",
-                    state="error",
-                )
-            except Exception as exc:
-                status.update(
-                    label=f"Error — **{f.name}**: {exc}",
-                    state="error",
-                )
+    # Trigger rerun so the polling loop picks up new jobs
+    st.rerun()
 
 
 def _delete_document(doc_id: int) -> None:
@@ -252,6 +220,58 @@ with st.sidebar:
 
     if st.button("Clear Chat", use_container_width=True):
         st.session_state.messages = []  # type: ignore[assignment]
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Ingestion job polling — runs on every rerun to show progress
+# ---------------------------------------------------------------------------
+import time as _time
+
+if "ingestion_jobs" in st.session_state and st.session_state.ingestion_jobs:  # type: ignore[attr-defined]
+    jobs = st.session_state.ingestion_jobs.copy()  # type: ignore[attr-defined]
+    for job_id, job_info in list(jobs.items()):
+        if job_info["status"] in ("complete", "error"):
+            continue
+        try:
+            status_resp = httpx.get(
+                f"{BACKEND_URL}/ingest/status/{job_id}", timeout=10
+            )
+            if status_resp.status_code == 404:
+                job_info["status"] = "error"
+                job_info["message"] = "Job not found (expired?)"
+                continue
+            job_data = status_resp.json()
+            job_info["status"] = job_data.get("status", "unknown")
+            job_info["message"] = job_data.get("message", "")
+            if "result" in job_data:
+                job_info["result"] = job_data["result"]
+        except Exception as exc:
+            job_info["error"] = str(exc)
+
+    # Show progress for active jobs
+    for job_id, job_info in jobs.items():
+        if job_info["status"] in ("complete", "error"):
+            with st.status(
+                job_info["message"],
+                state="complete" if job_info["status"] == "complete" else "error",
+            ) as status:
+                pass  # Status already collapsed
+        else:
+            with st.status(
+                job_info["message"], expanded=True
+            ) as status:
+                status.update(label=job_info["message"])
+            _time.sleep(0.5)  # Brief pause to avoid tight polling loop
+            st.rerun()  # Rerun to update UI with new progress
+
+    # Clean up completed jobs after a delay
+    if all(
+        j["status"] in ("complete", "error") for j in jobs.values()
+    ):
+        _time.sleep(2)  # Let user see final state briefly
+        st.session_state.ingestion_jobs = {}  # type: ignore[attr-defined]
+        st.toast("All documents ingested successfully", icon="✅")
         st.rerun()
 
 

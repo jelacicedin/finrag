@@ -97,20 +97,42 @@ def _extract_tables(lines: list[str], start: int) -> tuple[list[tuple[int, int]]
     return tables, i
 
 
+def _char_offset_to_line(lines: list[str], offset: int) -> int:
+    """Convert a character offset in the raw markdown to a line index."""
+    pos = 0
+    for i, line in enumerate(lines):
+        if pos + len(line) >= offset:
+            return i
+        pos += len(line) + 1  # +1 for the newline
+    return min(len(lines), max(0, pos))
+
+
 def _split_by_headings(markdown: str) -> list[tuple[str, list[tuple[int, int]], list[str]]]:
     """Split markdown into sections by heading lines.
 
-    Each section returns (heading_text, [(table_start, table_end), ...], lines_without_tables).
+    Each section returns (heading_text, [(table_start, table_end), ...], prose_line_indices).
     """
+    if not markdown or not markdown.strip():
+        return []
+
     sections: list[tuple[str, list[tuple[int, int]], list[str]]] = []
     lines = markdown.split("\n")
 
-    heading_starts = [m.start() for m in _HEADING_RE.finditer(markdown)]
-    if not heading_starts:
-        return [("Document", [], [(0, len(lines) - 1)])]
+    heading_matches = list(_HEADING_RE.finditer(markdown))
+    if not heading_matches:
+        return [("Document", [], [(i, i) for i in range(len(lines))])]
 
-    for idx, start in enumerate(heading_starts):
-        end = heading_starts[idx + 1] if idx + 1 < len(heading_starts) else len(lines)
+    # Convert character offsets to line indices
+    heading_line_indices = [_char_offset_to_line(lines, m.start()) for m in heading_matches]
+
+    for idx, start in enumerate(heading_line_indices):
+        end = heading_line_indices[idx + 1] if idx + 1 < len(heading_line_indices) else len(lines)
+        # Clamp to valid range
+        start = min(start, len(lines) - 1)
+        end = min(end, len(lines))
+        if start >= end:
+            continue
+
         heading_line = lines[start] if start < len(lines) else ""
         heading_text = re.sub(r"^#{1,3}\s+", "", heading_line).strip()
 
@@ -121,10 +143,10 @@ def _split_by_headings(markdown: str) -> list[tuple[str, list[tuple[int, int]], 
         abs_tables = [(s + start, e + start) for s, e in tables]
 
         # Lines without table content
-        table_lines = set()
+        table_line_set = set()
         for s, e in abs_tables:
-            table_lines.update(range(s, e + 1))
-        prose_lines = [(i, i) for i in range(start, end) if i not in table_lines]
+            table_line_set.update(range(s, e + 1))
+        prose_lines = [(i, i) for i in range(start, end) if i not in table_line_set]
 
         sections.append((heading_text, abs_tables, prose_lines))
 

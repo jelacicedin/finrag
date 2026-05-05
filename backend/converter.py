@@ -280,7 +280,7 @@ def convert_file(file_path: str) -> tuple[str, dict[str, Any]]:
     Parameters
     ----------
     file_path : str
-        Path to the file. Supported: .pdf, .xlsx, .csv.
+        Path to the file. Supported: .pdf, .xlsx, .csv, .md, .txt.
 
     Returns
     -------
@@ -298,6 +298,16 @@ def convert_file(file_path: str) -> tuple[str, dict[str, Any]]:
         return _convert_xlsx(file_path)
     elif ext in (".csv",):
         return _convert_csv(file_path)
+    elif ext in (".md", ".txt"):
+        # Plain text/markdown files pass through as-is
+        content = path.read_text(encoding="utf-8", errors="replace")
+        metadata = {
+            "title": path.stem,
+            "detected_date": None,
+            "detected_revision": None,
+            "file_type": ext.lstrip("."),
+        }
+        return content, metadata
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
