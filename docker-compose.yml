@@ -15,7 +15,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./supabase/20260505_init.sql:/docker-entrypoint-initdb.d/001_init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edintech}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edintech} -d ${POSTGRES_DB:-edintechrag}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -66,7 +66,8 @@ services:
       GENERATION_MODEL: ${GENERATION_MODEL:-qwen3.6:27b}
       OLLAMA_THINK: ${OLLAMA_THINK:-true}
       LLAMA_SERVER_URL: ${LLAMA_SERVER_URL:-http://localhost:8080}
-      APP_PORT: ${APP_PORT:-8001} 
+      VISION_MODEL: ${VISION_MODEL:-}
+      APP_PORT: ${APP_PORT:-8001}
     depends_on:
       postgres:
         condition: service_healthy

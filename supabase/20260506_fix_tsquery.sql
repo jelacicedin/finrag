@@ -1,63 +1,10 @@
 -- ============================================================
--- EdinTech RAG — industrial document migration
+-- Migration: fix hybrid_search to use plainto_tsquery throughout
+-- Apply to a running database:
+--   docker exec -i edintech-postgres psql -U edintech edintechrag \
+--     < supabase/20260506_fix_tsquery.sql
 -- ============================================================
 
--- 1. Enable pgvector
-create extension if not exists vector;
-
--- 2. Enum types
-create type file_type as enum ('pdf', 'xlsx', 'csv', 'docx', 'md', 'txt');
-
-create type document_category as enum (
-    'manual',
-    'datasheet',
-    'maintenance_record',
-    'procedure',
-    'report',
-    'specification',
-    'log',
-    'other'
-);
-
--- 3. documents table
-create table if not exists documents (
-    id                bigserial primary key,
-    filename          text not null,
-    file_type         file_type not null,
-    document_category document_category not null,
-    title             text,
-    equipment_id      text,
-    location          text,
-    revision          text,
-    document_date     date,
-    markdown_content  text,
-    source_path       text,
-    ingested_at       timestamptz default now(),
-    metadata          jsonb
-);
-
--- 4. chunks table
-create table if not exists chunks (
-    id          bigserial primary key,
-    document_id bigint not null references documents(id) on delete cascade,
-    content     text not null,
-    metadata    jsonb,
-    embedding   vector(1024),
-    fts         tsvector generated always as (to_tsvector('english', content)) stored
-);
-
--- 5. Indexes
-create index on documents (equipment_id);
-create index on documents (document_category);
-create index on documents using gin (metadata);
-create index on documents (file_type);
-
-create index on chunks (document_id);
-create index on chunks using hnsw (embedding vector_cosine_ops);
-create index on chunks using gin (fts);
-create index on chunks using gin (metadata);
-
--- 6. Hybrid search (RRF) with optional filters
 create or replace function hybrid_search(
     query_text             text,
     query_embedding        vector(1024),
@@ -170,14 +117,14 @@ begin
         limit match_count
     )
     select
-        comb.am_id          as chunk_id,
-        comb.am_doc_id      as chunk_document_id,
-        comb.am_content     as chunk_content,
-        comb.am_metadata    as chunk_metadata,
-        d.filename          as doc_filename,
-        comb.am_category    as doc_category,
-        comb.am_equip       as doc_equipment_id,
-        comb.am_location    as doc_location,
+        comb.am_id           as chunk_id,
+        comb.am_doc_id       as chunk_document_id,
+        comb.am_content      as chunk_content,
+        comb.am_metadata     as chunk_metadata,
+        d.filename           as doc_filename,
+        comb.am_category     as doc_category,
+        comb.am_equip        as doc_equipment_id,
+        comb.am_location     as doc_location,
         comb.am_score::float as rrf_score
     from combined comb
     inner join documents d on d.id = comb.am_doc_id;

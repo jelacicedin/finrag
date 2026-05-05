@@ -65,12 +65,20 @@ logger = logging.getLogger("edintech-rag")
 # In-memory progress store for ingest polling
 _ingest_progress: dict[str, dict] = {}
 
+# Models that returned 400 when think=True — skip thinking for them on future calls
+_no_think_models: set[str] = set()
+
 
 # ---------------------------------------------------------------------------
 # Database helper (asyncpg)
 # ---------------------------------------------------------------------------
 
 import asyncpg  # noqa: E402
+
+
+def _sanitize_query_text(text: str) -> str:
+    """Strip characters that break tsquery parsing (punctuation, special chars)."""
+    return re.sub(r"[^\w\s]", " ", text).strip()
 
 _pool: asyncpg.Pool | None = None
 
@@ -288,8 +296,8 @@ async def _hybrid_search(
 
 
 async def _embed_text(text: str) -> list[float]:
-    """Embed text using Ollama embedding model."""
-    resp = ollama.embed(model=embed_model, input=text)
+    """Embed text, then immediately unload the embedding model to free VRAM for generation."""
+    resp = ollama.embed(model=embed_model, input=text, keep_alive=0)
     return resp["embeddings"][0]
 
 
@@ -330,36 +338,58 @@ async def _generate_with_ollama(
     user_prompt: str,
     show_thinking: bool = False,
 ) -> tuple[str, str | None]:
-    """Generate an answer using Ollama with optional extended thinking."""
-    think_mode = "true" if (show_thinking or ollama_think) else "false"
+    """Generate an answer using Ollama with optional extended thinking.
+
+    If the model returns 400 because it does not support thinking, the call is
+    retried automatically without think=True and the model is remembered so
+    subsequent queries skip the think parameter from the start.
+    """
+    use_thinking = (show_thinking or ollama_think) and gen_model not in _no_think_models
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
-    response = ollama.chat(
-        model=gen_model,
-        messages=messages,
-        options={
-            "num_predict": 2048,
-            "temperature": 0.1,
-            "thinking": think_mode,
-        },
-    )
+    def _do_chat(think: bool) -> Any:
+        return ollama.chat(
+            model=gen_model,
+            messages=messages,
+            think=think,
+            options={"num_predict": 2048, "temperature": 0.1},
+        )
 
-    answer = response["message"]["content"]
-    thinking = None
+    try:
+        response = _do_chat(use_thinking)
+    except Exception as exc:
+        # Ollama returns 400 when the model does not support extended thinking.
+        # Detect by status code (ResponseError) or error text, then fall back.
+        status = getattr(exc, "status_code", None)
+        is_think_error = (
+            (status == 400 or "400" in str(exc))
+            and use_thinking
+            and "think" in str(exc).lower()
+        )
+        if is_think_error:
+            _no_think_models.add(gen_model)
+            logger.info(
+                "Model '%s' does not support thinking — retrying without it.", gen_model
+            )
+            response = _do_chat(False)
+        else:
+            raise
 
-    # Extract thinking content if present (model wraps it in tags)
-    thinking_match = re.search(
-        r"<think>(.*?)</think>", answer, re.DOTALL
-    )
-    if thinking_match:
-        thinking = thinking_match.group(1).strip()
-        answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
+    msg = response.message
+    answer = msg.content or ""
+    # Prefer Ollama's native thinking field; fall back to <think> tag parsing
+    thinking: str | None = msg.thinking if msg.thinking else None
+    if not thinking:
+        m = re.search(r"<think>(.*?)</think>", answer, re.DOTALL)
+        if m:
+            thinking = m.group(1).strip()
+            answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
 
-    return answer, thinking
+    return answer.strip(), thinking
 
 
 async def _generate_with_llama_cpp(
@@ -510,7 +540,7 @@ async def query(request: QueryRequest):
     # Step 2: Hybrid search
     try:
         sources = await _hybrid_search(
-            query_text=request.question,
+            query_text=_sanitize_query_text(request.question),
             embedding=embedding,
             top_k=request.top_k,
             filters=request.filters,
@@ -727,14 +757,17 @@ async def ingest_document(
                 tmp_path = tmp.name
 
             _ingest_progress[job_id]["stage"] = "converting"
-            _ingest_progress[job_id]["message"] = f"Converting **{file.filename}** to markdown …"
+            _ingest_progress[job_id]["message"] = f"Converting **{file.filename}** …"
             logger.info("[ingest] Converting %s", file.filename)
 
             path = Path(tmp_path)
             file_type = path.suffix.lstrip(".").lower()
 
+            def _conv_progress(msg: str) -> None:
+                _ingest_progress[job_id]["message"] = msg
+
             try:
-                markdown, metadata = convert_file(str(path))
+                markdown, metadata = convert_file(str(path), progress_callback=_conv_progress)
             except Exception as exc:
                 logger.error("[ingest] Conversion failed for %s: %s", file.filename, exc)
                 _ingest_progress[job_id]["status"] = "error"
@@ -816,7 +849,39 @@ def get_ingest_status(job_id: str):
     """Poll the current status of an ingest job."""
     if job_id not in _ingest_progress:
         raise HTTPException(status_code=404, detail="Job not found")
-    return _ingest_progress[job_id]
+
+    data    = dict(_ingest_progress[job_id])
+    stage   = data.get("stage")
+    message = data.get("message", "")
+    status  = data.get("status", "queued")
+
+    if status == "complete":
+        progress = 100
+    elif status == "error":
+        progress = 0
+    elif stage == "converting":
+        # Parse "Converting page X/Y …" or "Converting sheet X/Y …"
+        m = re.search(r"(\d+)/(\d+)", message)
+        if m:
+            progress = max(2, int(int(m.group(1)) / int(m.group(2)) * 40))
+        else:
+            progress = 5
+    elif stage == "inserting":
+        progress = 45
+    elif stage == "chunking":
+        # Parse "Embedding chunk X–Y/total"
+        m = re.search(r"(\d+)[–\-](\d+)/(\d+)", message)
+        if m:
+            batch_end = int(m.group(2))
+            total_ch  = int(m.group(3))
+            progress  = int(50 + (batch_end / total_ch) * 45)
+        else:
+            progress = 50
+    else:
+        progress = 2
+
+    data["progress"] = min(progress, 99) if status not in ("complete", "error") else progress
+    return data
 
 
 @app.post("/documents/upload")
