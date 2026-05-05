@@ -1,5 +1,5 @@
 -- ============================================================
--- finrag RAG — industrial document migration
+-- EdinTech RAG — industrial document migration
 -- ============================================================
 
 -- 1. Enable pgvector
