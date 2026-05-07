@@ -1,3 +1,4 @@
+# Copyright (C) 2026  Edin Jelacic — AGPL-3.0-or-later
 """File converter for industrial documents into structured markdown.
 
 Supported formats: PDF, XLSX, CSV, MD, TXT.

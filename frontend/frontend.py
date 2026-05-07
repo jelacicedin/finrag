@@ -1,3 +1,4 @@
+# Copyright (C) 2026  Edin Jelacic — AGPL-3.0-or-later
 """EdinTech-RAG — Streamlit frontend for industrial document Q&A.
 
 Provides a chat interface to query ingested documents, upload files for

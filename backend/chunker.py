@@ -1,3 +1,4 @@
+# Copyright (C) 2026  Edin Jelacic — AGPL-3.0-or-later
 """Chunk structured markdown for embedding, then insert into the database.
 
 Uses content-aware strategies: prose chunks by heading boundaries with overlap,

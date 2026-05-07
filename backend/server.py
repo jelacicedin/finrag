@@ -1,3 +1,4 @@
+# Copyright (C) 2026  Edin Jelacic — AGPL-3.0-or-later
 """EdinTech-RAG — FastAPI server for industrial document Q&A.
 
 Provides a REST API that embeds user questions, performs hybrid search
