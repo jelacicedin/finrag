@@ -102,7 +102,7 @@ async def _close_pool() -> None:
 
 
 class Filters(BaseModel):
-    equipment_id: int | None = None
+    equipment_id: str | None = None
     document_category: str | None = None
     file_type: str | None = None
     location: str | None = None
@@ -118,7 +118,7 @@ class QueryRequest(BaseModel):
 class Source(BaseModel):
     doc_filename: str
     doc_category: str
-    doc_equipment_id: int | None
+    doc_equipment_id: str | None
     section: str
     chunk_index: int
     rrf_score: float
@@ -135,7 +135,7 @@ class DocumentInfo(BaseModel):
     filename: str
     file_type: str
     document_category: str
-    equipment_id: int | None
+    equipment_id: str | None
     location: str | None
     revision: str | None
     document_date: str | None
@@ -281,7 +281,7 @@ async def _hybrid_search(
                 "chunk_content": row["chunk_content"],
                 "doc_filename": row["doc_filename"],
                 "doc_category": str(row["doc_category"]),
-                "doc_equipment_id": int(row["doc_equipment_id"]) if row["doc_equipment_id"] else None,
+                "doc_equipment_id": row["doc_equipment_id"],
                 "section": section,
                 "chunk_index": chunk_index,
                 "rrf_score": float(row["rrf_score"]),
@@ -609,7 +609,7 @@ async def list_documents():
             filename=r["filename"],
             file_type=str(r["file_type"]),
             document_category=str(r["document_category"]),
-            equipment_id=int(r["equipment_id"]) if r["equipment_id"] else None,
+            equipment_id=r["equipment_id"],
             location=r["location"],
             revision=r["revision"],
             document_date=str(r["document_date"]) if r["document_date"] else None,
@@ -647,7 +647,7 @@ async def get_document(doc_id: int):
         filename=row["filename"],
         file_type=str(row["file_type"]),
         document_category=str(row["document_category"]),
-        equipment_id=int(row["equipment_id"]) if row["equipment_id"] else None,
+        equipment_id=row["equipment_id"],
         location=row["location"],
         revision=row["revision"],
         document_date=str(row["document_date"]) if row["document_date"] else None,
@@ -783,7 +783,7 @@ async def ingest_document(
             db = psycopg.connect(env_db_url)
             try:
                 cur = db.cursor()
-                eq_id = int(equipment_id) if equipment_id else None
+                eq_id = equipment_id or None
                 cur.execute(
                     """
                     INSERT INTO documents (filename, file_type, document_category,
@@ -964,7 +964,7 @@ def main():
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
-        port=8000,
+        port=int(os.environ.get("APP_PORT", 8000)),
         reload=os.environ.get("UVICORN_RELOAD", "false").lower() == "true",
     )
 

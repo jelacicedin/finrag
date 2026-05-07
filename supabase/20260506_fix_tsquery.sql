@@ -66,7 +66,7 @@ begin
             d.equipment_id                                                                as vm_equip,
             d.location                                                                    as vm_location,
             1.0 / (rrf_k + row_number() over (
-                order by c.embedding <#> query_embedding
+                order by c.embedding <=> query_embedding
             ))                                                                            as vm_rank
         from chunks c
         inner join documents d on d.id = c.document_id
@@ -75,7 +75,7 @@ begin
           and (filter_document_category is null or d.document_category = filter_document_category)
           and (filter_file_type         is null or d.file_type         = filter_file_type)
           and (filter_location          is null or d.location          = filter_location)
-        order by c.embedding <#> query_embedding
+        order by c.embedding <=> query_embedding
         limit v_limit
     ),
     combined as (

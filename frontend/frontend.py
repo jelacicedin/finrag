@@ -358,7 +358,7 @@ if prompt := st.chat_input("Ask a question about your documents…"):
 
     equip_raw = st.session_state.filter_equipment_id.strip()
     filters = {
-        "equipment_id":      int(equip_raw) if equip_raw.isdigit() else None,
+        "equipment_id":      equip_raw or None,
         "file_type":         _nonempty(st.session_state.filter_file_type),
         "document_category": _nonempty(st.session_state.filter_document_category),
         "location":          _nonempty(st.session_state.filter_location),

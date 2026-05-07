@@ -8,27 +8,27 @@ A fully local RAG (Retrieval-Augmented Generation) system that ingests PDFs, spr
 
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Documents   │────▶│  Converter       │────▶│  Chunker        │
+│  Documents   │───▶│  Converter       │───▶│  Chunker        │
 │  (PDF/XLSX/  │     │  → Structured    │     │  → Chunks +     │
 │   CSV)       │     │    Markdown      │     │    Embeddings   │
 └──────────────┘     └──────────────────┘     └────────┬────────┘
                                                        │
                                                        ▼
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  FastAPI     │◀────│  Hybrid Search   │◀────│  PostgreSQL     │
+│  FastAPI     │◀───│  Hybrid Search   │◀───│  PostgreSQL     │
 │  REST API    │     │  (RRF)           │     │  + pgvector     │
 │              │     └──────────────────┘     │  (chunks table) │
 └──────┬───────┘                              └─────────────────┘
        │
        ▼
 ┌──────────────────┐    ┌──────────────────────┐
-│  Ollama          │    │  llama.cpp server     │
-│  Embedding Model │    │  (optional gen backend)│
+│  Ollama          │    │  llama.cpp server    │
+│  Embedding Model │    │                      │
 └──────────────────┘    └──────────────────────┘
        ▲
-       │ GEN_BACKEND=ollama  OR  GEN_BACKEND=llama_cpp
+       │ GEN_BACKEND=ollama  OR  GEN_BACKEND=llama_cpp (depending on user preference)
 ┌──────┴─────────────────────────────────────────┐
-│  Generation Backend (configurable)              │
+│  Generation Backend (configurable)             │
 │  - Ollama: /api/chat endpoint                  │
 │  - llama.cpp: /v1/chat/completions (OpenAI API)│
 └────────────────────────────────────────────────┘
@@ -63,8 +63,8 @@ A fully local RAG (Retrieval-Augmented Generation) system that ingests PDFs, spr
 - A GGUF model file (e.g., `qwen3-27b.Q4_K_M.gguf`)
 - llama.cpp built and running a server on port 8080:
   ```bash
-  /home/edinj/llama.cpp/build/bin/llama-server \
-    -m "$MODEL_PATH/$MODEL_FILE" \
+  llama-server \
+    -m "/path/to/models/$MODEL_FILE" \
     --port 8080 \
     --host 0.0.0.0 \
     --n-gpu-layers 999 \
@@ -139,10 +139,10 @@ The server talks to llama.cpp's OpenAI-compatible `/v1/chat/completions` endpoin
 ### Starting llama.cpp server locally
 
 ```bash
-export MODEL_PATH=/home/edinj/llm-models
+export MODEL_PATH=/path/to/models
 export MODEL_FILE=qwen3-27b.Q4_K_M.gguf
 
-/home/edinj/llama.cpp/build/bin/llama-server \
+llama-server \
   -m "$MODEL_PATH/$MODEL_FILE" \
   --port 8080 \
   --host 0.0.0.0 \
@@ -291,17 +291,19 @@ A PL/pgSQL function `hybrid_search()` implements RRF-based hybrid retrieval with
 ## Project Structure
 
 ```
-finrag/
+EdinTech-RAG/
 ├── backend/
 │   ├── converter.py      # PDF/XLSX/CSV → Markdown conversion
 │   ├── chunker.py        # Markdown → Chunks + Embeddings
-│   ├── ingest.py         # Ingestion worker (CLI + Docker)
 │   ├── server.py         # FastAPI REST API (dual backend support)
 │   └── Dockerfile        # Server container image
+├── frontend/
+│   ├── frontend.py       # Streamlit chat + document management UI
+│   └── Dockerfile        # Frontend container image
 ├── supabase/
-│   └── 20260505_init.sql # Database schema + hybrid_search function
-├── ingest/               # Drop documents here for ingestion worker
-├── docker-compose.yml    # Orchestration (PostgreSQL, Ollama, App, Ingest)
+│   ├── 20260505_init.sql        # Database schema + hybrid_search function
+│   └── 20260506_fix_tsquery.sql # Migration: plainto_tsquery fix
+├── docker-compose.yml    # Orchestration (PostgreSQL, App, Streamlit)
 ├── .env.example          # Environment variable template
 ├── requirements.txt      # Python dependencies
 └── README.md             # This file
